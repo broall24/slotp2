@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DaisySMS OTP Tool</title>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: Arial; padding: 20px; background: #f4f4f4; }
+    input { padding: 8px; width: 250px; }
+    button { padding: 8px 12px; margin-left: 8px; }
+    pre { background: #fff; padding: 12px; border: 1px solid #ccc; white-space: pre-wrap; word-wrap: break-word; }
+  </style>
+</head>
+<body>
+  <h2>DaisySMS OTP Fetcher</h2>
+  <input type="text" id="phone" placeholder="Enter phone number (10 digits)" />
+  <button onclick="getOTP()">Get OTP</button>
+  <pre id="result">Please enter a number and press the button...</pre>
+
+  <script>
+    let apiKey = ""
+    const proxy = "https://slotp1.akhiem-1987.workers.dev/fetch?url="
+    let phoneData = []
+    let lastId = null
+
+    const cleanPhone = raw => raw.replace(/[^\d]/g, '').replace(/^1/, '').slice(-10)
+
+    async function init() {
+      const result = document.getElementById('result')
+      result.textContent = '🔄 Loading API key and data...'
+
+      try {
+        apiKey = await fetch('api.txt?ts=' + Date.now(), { cache: "no-store" })
+                    .then(r => r.text())
+                    .then(t => t.trim())
+
+        if (!apiKey || apiKey.length < 10) {
+          result.textContent = '❌ Invalid API key in api.txt'
+          return
+        }
+
+        const dataText = await fetch('data.txt?ts=' + Date.now(), { cache: "no-store" }).then(r => r.text())
+
+        phoneData = dataText.trim().split('\n').map(line => {
+          const [id, rawPhone] = line.split('|')
+          const cleanedPhone = cleanPhone(rawPhone)
+          return { id, phone: cleanedPhone }
+        })
+
+        if (!phoneData.length || !phoneData[0].id) {
+          result.textContent = '⚠️ data.txt is empty or malformed.'
+        } else {
+          result.textContent = `✅ Ready. ${phoneData.length} phone entries loaded.`
+        }
+
+      } catch (err) {
+        result.textContent = '❌ Failed to load config or data: ' + err.message
+      }
+    }
+
+    async function getOTP() {
+      const inputPhone = cleanPhone(document.getElementById('phone').value)
+      const result = document.getElementById('result')
+
+      if (!phoneData.length || !apiKey) {
+        result.textContent = '❌ Data not ready.'
+        return
+      }
+
+      result.textContent = '⏳ Searching for ID...'
+
+      const match = phoneData.find(row => row.phone === inputPhone)
+
+      if (!match) {
+        result.textContent = '❌ No ID found for this phone.'
+        return
+      }
+
+      const oldId = match.id
+      result.textContent = `🔄 Renewing ID: ${oldId}`
+
+      const renewUrl = proxy + encodeURIComponent(`https://daisysms.com/stubs/handler_api.php?api_key=${apiKey}&action=getExtraActivation&activationId=${oldId}`)
+      let renewResp
+
+      try {
+        renewResp = await fetch(renewUrl).then(r => r.text())
+      } catch (err) {
+        result.textContent = '❌ Failed to call renew API: ' + err.message
+        return
+      }
+
+      if (!renewResp.startsWith("ASLEEP:")) {
+        result.textContent = '❌ Could not renew ID. Response: ' + renewResp
+        return
+      }
+
+      const newId = renewResp.split(':')[1].trim()
+      if (!/^\d+$/.test(newId)) {
+        result.textContent = '❌ Invalid new ID: ' + newId
+        return
+      }
+
+      lastId = newId
+      result.textContent = `📦 New ID: ${newId}\n⌛ Waiting for OTP...`
+      await pollOTPStatus(newId)
+    }
+
+    async function pollOTPStatus(id) {
+      const result = document.getElementById('result')
+      let tries = 0, maxTries = 60
+
+      while (tries < maxTries) {
+        const url = proxy + encodeURIComponent(`https://daisysms.com/stubs/handler_api.php?api_key=${apiKey}&action=getStatus&id=${id}`)
+        let statusResp
+
+        try {
+          statusResp = await fetch(url).then(r => r.text())
+        } catch (err) {
+          result.textContent = `❌ Failed to call status API: ${err.message}`
+          return
+        }
+
+        console.log("Status:", statusResp)
+
+        if (statusResp.startsWith('STATUS_OK:')) {
+          const otp = statusResp.split(':')[1].trim()
+          result.textContent = `✅ OTP Received: ${otp}\n📦 ID: ${id}`
+          try {
+            await navigator.clipboard.writeText(otp)
+            result.textContent += '\n📋 OTP copied to clipboard.'
+          } catch {}
+          return
+        } else if (statusResp.includes("NO_ACTIVATION") || statusResp.includes("BAD")) {
+          result.textContent = `❌ Error: ${statusResp}`
+          return
+        } else {
+          result.textContent = `⌛ Waiting for OTP... (${tries + 1}/60)\nStatus: ${statusResp}`
+        }
+
+        await new Promise(res => setTimeout(res, 2000))
+        tries++
+      }
+
+      result.textContent = '❌ Timeout. No OTP received.'
+    }
+
+    window.addEventListener('DOMContentLoaded', init)
+  </script>
+</body>
+</html>
