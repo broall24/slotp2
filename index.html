@@ -106,7 +106,7 @@
 
     async function pollOTPStatus(id) {
       const result = document.getElementById('result')
-      let tries = 0, maxTries = 60
+      let tries = 0, maxTries = 90
 
       while (tries < maxTries) {
         const url = proxy + encodeURIComponent(`https://daisysms.com/stubs/handler_api.php?api_key=${apiKey}&action=getStatus&id=${id}`)
